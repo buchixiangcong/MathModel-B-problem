@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 
-ROOT = Path(__file__).resolve().parents[1]
-PROBLEM1_DIR = ROOT / "problem1"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROBLEM1_DIR = PROJECT_ROOT / "problem1" / "problem1"
 if str(PROBLEM1_DIR) not in sys.path:
     sys.path.insert(0, str(PROBLEM1_DIR))
 

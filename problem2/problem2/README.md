@@ -11,7 +11,7 @@
 - `example_result.png`：首次可行域、候选域及推荐点示意图。
 - `问题二数学推导.md`：可用于论文正文的推导与算法说明。
 
-程序复用 `../problem1/problem1_geometry.py` 中的扇形、凸包、直径和最小覆盖圆模块。
+程序复用 `../../problem1/problem1/problem1_geometry.py` 中的扇形、凸包、直径和最小覆盖圆模块。
 
 ## 方法概览
 
@@ -25,7 +25,7 @@
 ## 运行
 
 ```bash
-cd problem2
+cd problem2/problem2
 python3 problem2_strategy.py example_input.json \
   --output example_output.json \
   --plot example_result.png
