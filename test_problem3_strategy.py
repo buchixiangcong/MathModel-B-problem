@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from geometry import distance, problem3_fast_scan_points, problem3_scan_points
-from strategy import Problem3Strategy
+from geometry import Point, distance, problem3_fast_scan_points, problem3_scan_points
+from strategy import ChannelState, Problem3Strategy, clear_route_length, optimize_clear_order
 
 
 def route_length(points):
@@ -42,6 +42,20 @@ class Problem3FastStrategyTests(unittest.TestCase):
         self.assertEqual(len(channel_one_calls), 4)
         self.assertEqual(len(channel_two_calls), len(problem3_scan_points()))
         self.assertEqual(len(strategy.state[1].bearings), 4)
+
+    def test_clear_route_optimizer_removes_large_detour(self):
+        start = Point(0.0, 0.0)
+        states = [
+            ChannelState(1, last_estimate=Point(1.0, 0.0)),
+            ChannelState(2, last_estimate=Point(0.0, 10.0)),
+            ChannelState(3, last_estimate=Point(2.0, 0.0)),
+        ]
+        bad_length = clear_route_length(start, states)
+
+        optimized = optimize_clear_order(start, states)
+
+        self.assertEqual({st.channel for st in optimized}, {1, 2, 3})
+        self.assertLess(clear_route_length(start, optimized), bad_length - 5.0)
 
 
 if __name__ == "__main__":

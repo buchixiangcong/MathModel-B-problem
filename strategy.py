@@ -8,6 +8,7 @@ from geometry import (
     Bearing,
     Point,
     clear_candidates,
+    distance,
     estimate_source_position,
     problem3_fast_scan_points,
     problem3_scan_points,
@@ -106,17 +107,20 @@ class Problem3Strategy:
             if not st.cleared and len(st.bearings) >= 2
         ]
 
-        # Nearest-neighbor order reduces extra travel between clear attempts.
-        current = Point(*client.current_position)
-        while pending:
-            for st in pending:
-                st.last_estimate = estimate_source_position(st.bearings)
-            pending = [st for st in pending if st.last_estimate is not None and not st.cleared]
-            if not pending:
-                break
+        for st in pending:
+            st.last_estimate = estimate_source_position(st.bearings)
+        pending = [st for st in pending if st.last_estimate is not None]
 
-            next_state = min(pending, key=lambda st: distance_to_estimate(current, st))
-            pending.remove(next_state)
+        current = Point(*client.current_position)
+        pending = optimize_clear_order(current, pending)
+        if pending:
+            route_channels = ",".join(str(st.channel) for st in pending)
+            print(
+                f"[clear-route] channels={route_channels}, "
+                f"estimated travel={clear_route_length(current, pending):.1f} m"
+            )
+
+        for next_state in pending:
             assert next_state.last_estimate is not None
             self.clear_with_refinement(client, next_state)
             current = Point(*client.current_position)
@@ -188,6 +192,77 @@ def distance_to_estimate(current: Point, st: ChannelState) -> float:
     dx = current.x - st.last_estimate.x
     dy = current.y - st.last_estimate.y
     return (dx * dx + dy * dy) ** 0.5
+
+
+def clear_route_length(start: Point, route: Iterable[ChannelState]) -> float:
+    total = 0.0
+    current = start
+    for st in route:
+        if st.last_estimate is None:
+            return float("inf")
+        total += distance(current, st.last_estimate)
+        current = st.last_estimate
+    return total
+
+
+def optimize_clear_order(start: Point, states: Iterable[ChannelState]) -> list[ChannelState]:
+    """Build an open route with multi-start nearest neighbor and 2-opt."""
+
+    available = [st for st in states if st.last_estimate is not None]
+    if len(available) < 2:
+        return available
+
+    best_route: list[ChannelState] | None = None
+    best_length = float("inf")
+    for first in available:
+        route = [first]
+        remaining = [st for st in available if st is not first]
+        current = first.last_estimate
+        assert current is not None
+
+        while remaining:
+            next_state = min(remaining, key=lambda st: distance_to_estimate(current, st))
+            remaining.remove(next_state)
+            route.append(next_state)
+            assert next_state.last_estimate is not None
+            current = next_state.last_estimate
+
+        route = improve_clear_order_2opt(start, route)
+        candidate_length = clear_route_length(start, route)
+        if candidate_length < best_length:
+            best_route = route
+            best_length = candidate_length
+
+    assert best_route is not None
+    return best_route
+
+
+def improve_clear_order_2opt(start: Point, route: list[ChannelState]) -> list[ChannelState]:
+    route = list(route)
+    improved = True
+    while improved:
+        improved = False
+        for left in range(len(route)):
+            previous = start if left == 0 else route[left - 1].last_estimate
+            first = route[left].last_estimate
+            assert previous is not None and first is not None
+            for right in range(left + 1, len(route)):
+                last = route[right].last_estimate
+                assert last is not None
+                old_length = distance(previous, first)
+                new_length = distance(previous, last)
+                if right + 1 < len(route):
+                    following = route[right + 1].last_estimate
+                    assert following is not None
+                    old_length += distance(last, following)
+                    new_length += distance(first, following)
+                if new_length + 1e-9 < old_length:
+                    route[left:right + 1] = reversed(route[left:right + 1])
+                    improved = True
+                    break
+            if improved:
+                break
+    return route
 
 
 def parse_channels(spec: str) -> list[int]:
