@@ -297,12 +297,12 @@ def _circle_from_two(first: Point, second: Point) -> Circle:
 
 
 def _circumcircle(first: Point, second: Point, third: Point) -> Optional[Circle]:
-    ax, ay = first.x, first.y
-    bx, by = second.x, second.y
-    cx, cy = third.x, third.y
-    denominator = 2.0 * (
-        ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)
-    )
+    # Translate the three points before squaring. Direct formulas containing
+    # x^2+y^2 at global coordinates lose precision for a tiny triangle far
+    # from the origin, which is common after several bearing intersections.
+    bx, by = second.x - first.x, second.y - first.y
+    cx, cy = third.x - first.x, third.y - first.y
+    denominator = 2.0 * (bx * cy - by * cx)
     scale = max(
         1.0,
         _distance_sq(first, second),
@@ -312,20 +312,11 @@ def _circumcircle(first: Point, second: Point, third: Point) -> Optional[Circle]
     if abs(denominator) <= ANGLE_EPS * scale:
         return None
 
-    first_norm = ax * ax + ay * ay
     second_norm = bx * bx + by * by
     third_norm = cx * cx + cy * cy
-    ux = (
-        first_norm * (by - cy)
-        + second_norm * (cy - ay)
-        + third_norm * (ay - by)
-    ) / denominator
-    uy = (
-        first_norm * (cx - bx)
-        + second_norm * (ax - cx)
-        + third_norm * (bx - ax)
-    ) / denominator
-    center = Point(ux, uy)
+    ux = (second_norm * cy - third_norm * by) / denominator
+    uy = (bx * third_norm - cx * second_norm) / denominator
+    center = Point(first.x + ux, first.y + uy)
     return Circle(center, _distance(center, first))
 
 
