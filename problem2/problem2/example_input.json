@@ -1,0 +1,22 @@
+{
+  "first_observation": {
+    "x": 0.0,
+    "y": 0.0,
+    "bearing_deg": 30.0
+  },
+  "angle_error_deg": 1.0,
+  "target_center": {
+    "x": 0.0,
+    "y": 0.0
+  },
+  "target_radius": 1800.0,
+  "minimum_reception_radius": 1000.0,
+  "maximum_reception_radius": 1500.0,
+  "circle_side_count": 360,
+  "candidate_angle_count": 48,
+  "candidate_radial_levels": 6,
+  "source_edge_subdivisions": 10,
+  "source_interior_levels": 4,
+  "error_sample_count": 5,
+  "near_optimal_tolerance": 0.05
+}
