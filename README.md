@@ -5,6 +5,11 @@
 - `robot_client.py`：给算法调用的接口层。
 - `smoke_test.py`：最小联调脚本。
 - `logs/`：运行后自动生成，不需要手动创建。
+- `problem3/`：问题三的七点保证覆盖、主动定位、清除算法与离线模拟器。
+- `run_problem3.py`：问题三离线或官方演练入口。
+- `benchmark_problem3.py`：问题三批量离线测试。
+
+问题三的详细操作见 `problem3/README.md`。在完成足够演练前，不要运行正式测试。
 
 ## 运行前
 
