@@ -1,0 +1,25 @@
+{
+  "strategy": "adaptive coverage route + route-aware localization shortlist + shared stations",
+  "seed_range": [0, 19],
+  "case_count": 20,
+  "source_count": 256,
+  "passed_count": 20,
+  "cleared_source_count": 256,
+  "overall_clear_ratio": 1.0,
+  "mean_virtual_time_s": 4704.570971413121,
+  "max_virtual_time_s": 5467.738436404386,
+  "mean_average_time_per_source_s": 374.29471047995025,
+  "baseline": {
+    "case_count": 20,
+    "overall_clear_ratio": 1.0,
+    "mean_virtual_time_s": 5489.085,
+    "max_virtual_time_s": 6592.235,
+    "mean_average_time_per_source_s": 434.016
+  },
+  "relative_improvement": {
+    "mean_virtual_time": 0.14292255058664227,
+    "max_virtual_time": 0.17057895593764683,
+    "mean_average_time_per_source": 0.13760158501080555
+  },
+  "note": "Offline simulator results validate logic and comparative performance; they do not replace official rehearsal results."
+}
