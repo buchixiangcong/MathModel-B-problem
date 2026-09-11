@@ -57,16 +57,24 @@ class StrategyConfig:
     source_edge_subdivisions: int = 6
     source_interior_levels: int = 3
     error_sample_count: int = 5
-    near_optimal_tolerance: float = 0.03
+    near_optimal_tolerance: float = 0.20
     maximum_localization_measurements: int = 8
     opportunistic_min_crossing_angle_deg: float = 15.0
-    route_candidate_tracks: int = 3
+    probe_known_channels_during_coverage: bool = True
+    coverage_probe_center_distance_m: float = 1200.0
+    probe_along_coverage_segments: bool = True
+    coverage_segment_sample_count: int = 9
+    coverage_segment_improvement_ratio: float = 0.90
+    exact_clear_route_limit: int = 16
+    source_tour_planning: bool = True
+    localization_clear_leg_weight: float = 1.5
 
 
 @dataclass
 class SourceTrack:
     channel: int
     observations: list[BearingObservation] = field(default_factory=list)
+    no_signal_positions: list[Point] = field(default_factory=list)
     measured_positions: list[Point] = field(default_factory=list)
     region: list[Point] = field(default_factory=list)
     cleared: bool = False
@@ -138,8 +146,16 @@ class Problem3Strategy:
                 f"coverage ring is invalid: worst distance {worst:.3f} m exceeds "
                 f"{self.config.guaranteed_reception_radius:.3f} m"
             )
-        if self.config.route_candidate_tracks < 1:
-            raise ValueError("route_candidate_tracks must be positive")
+        if self.config.coverage_segment_sample_count < 3:
+            raise ValueError("coverage_segment_sample_count must be at least 3")
+        if not 0.0 < self.config.coverage_segment_improvement_ratio <= 1.0:
+            raise ValueError(
+                "coverage_segment_improvement_ratio must be in (0, 1]"
+            )
+        if self.config.exact_clear_route_limit < 1:
+            raise ValueError("exact_clear_route_limit must be positive")
+        if self.config.localization_clear_leg_weight < 0.0:
+            raise ValueError("localization_clear_leg_weight must be nonnegative")
 
     def run(self) -> RunSummary:
         enter_response = self.robot.enter()
@@ -193,13 +209,15 @@ class Problem3Strategy:
         unseen = set(range(1, 21))
         points = coverage_points(self.config.coverage_ring_radius)
         for scan_index, point in enumerate(points):
+            if scan_index > 0:
+                self._coverage_segment_measurements(points[scan_index - 1], point)
             self._log(
                 "coverage_point_start",
                 scan_index=scan_index,
                 point=self._point_dict(point),
                 unseen_channels=sorted(unseen),
             )
-            self._opportunistic_measurements(point)
+            self._coverage_opportunistic_measurements(point)
             for channel in serpentine_channel_order(list(unseen), scan_index):
                 outcome = self._measure(point, channel, phase="coverage")
                 if outcome == "no_signal":
@@ -273,92 +291,287 @@ class Problem3Strategy:
             current = target
         return total
 
+    def _optimal_open_route_order(
+        self, start: Point, targets: Sequence[Point]
+    ) -> list[int]:
+        """Exact shortest open route from start through every target."""
+
+        count = len(targets)
+        if count <= 1:
+            return list(range(count))
+        if count > self.config.exact_clear_route_limit:
+            remaining = list(range(count))
+            order: list[int] = []
+            current = start
+            while remaining:
+                index = min(
+                    remaining,
+                    key=lambda item: (self._distance(current, targets[item]), item),
+                )
+                remaining.remove(index)
+                order.append(index)
+                current = targets[index]
+            return order
+
+        full_mask = (1 << count) - 1
+        costs: dict[tuple[int, int], float] = {}
+        parents: dict[tuple[int, int], int | None] = {}
+        for index, target in enumerate(targets):
+            state = (1 << index, index)
+            costs[state] = self._distance(start, target)
+            parents[state] = None
+
+        for mask in range(1, full_mask + 1):
+            for last in range(count):
+                state = (mask, last)
+                current_cost = costs.get(state)
+                if current_cost is None:
+                    continue
+                remaining = full_mask ^ mask
+                while remaining:
+                    bit = remaining & -remaining
+                    next_index = bit.bit_length() - 1
+                    next_state = (mask | bit, next_index)
+                    candidate_cost = current_cost + self._distance(
+                        targets[last], targets[next_index]
+                    )
+                    previous_cost = costs.get(next_state)
+                    if previous_cost is None or candidate_cost < previous_cost - 1e-9:
+                        costs[next_state] = candidate_cost
+                        parents[next_state] = last
+                    remaining ^= bit
+
+        last = min(
+            range(count),
+            key=lambda index: (costs[(full_mask, index)], index),
+        )
+        order: list[int] = []
+        mask = full_mask
+        while True:
+            order.append(last)
+            previous = parents[(mask, last)]
+            if previous is None:
+                break
+            mask ^= 1 << last
+            last = previous
+        order.reverse()
+        return order
+
+    def _coverage_segment_measurements(self, start: Point, end: Point) -> None:
+        """Use guaranteed-reception points on a mandatory coverage segment."""
+
+        if not self.config.probe_along_coverage_segments:
+            return
+        scheduled: list[tuple[float, int, Point, float]] = []
+        for track in self.tracks.values():
+            if track.cleared or not track.region:
+                continue
+            current_radius = minimum_enclosing_circle(track.region).radius
+            if current_radius <= self.config.clear_decision_radius:
+                continue
+            interval = self._segment_guaranteed_interval(start, end, track.region)
+            if interval is None:
+                continue
+            lower, upper = interval
+            candidates: list[tuple[float, Point]] = []
+            for sample_index in range(self.config.coverage_segment_sample_count):
+                fraction = lower + (upper - lower) * sample_index / (
+                    self.config.coverage_segment_sample_count - 1
+                )
+                point = Point(
+                    start.x + fraction * (end.x - start.x),
+                    start.y + fraction * (end.y - start.y),
+                )
+                if self._already_measured_here(track, point, tolerance=1.0):
+                    continue
+                if (
+                    self._minimum_crossing_angle(track, point)
+                    < self.config.opportunistic_min_crossing_angle_deg
+                ):
+                    continue
+                candidates.append((fraction, point))
+            if not candidates:
+                continue
+
+            scenarios = generate_source_scenarios(
+                track.region,
+                self.config.source_edge_subdivisions,
+                self.config.source_interior_levels,
+            )
+            first_station = track.observations[0].station
+            evaluations = [
+                (
+                    fraction,
+                    evaluate_candidate(
+                        point,
+                        first_station,
+                        track.region,
+                        scenarios,
+                        self.config.angle_error_deg,
+                        self.config.error_sample_count,
+                        optical_radius=5.0,
+                    ),
+                )
+                for fraction, point in candidates
+            ]
+            fraction, chosen = min(
+                evaluations,
+                key=lambda item: (item[1].worst_mec_radius, item[0]),
+            )
+            if (
+                chosen.worst_mec_radius
+                > self.config.clear_decision_radius
+                and chosen.worst_mec_radius
+                > current_radius * self.config.coverage_segment_improvement_ratio
+            ):
+                continue
+            scheduled.append(
+                (fraction, track.channel, chosen.point, chosen.worst_mec_radius)
+            )
+
+        for fraction, channel, point, predicted_radius in sorted(scheduled):
+            track = self.tracks[channel]
+            if track.cleared or self._already_measured_here(track, point, tolerance=1.0):
+                continue
+            if not self._point_guarantees_reception(point, track.region):
+                continue
+            self._log(
+                "coverage_segment_probe_selected",
+                channel=channel,
+                segment_fraction=fraction,
+                point=self._point_dict(point),
+                predicted_worst_mec_radius=predicted_radius,
+            )
+            outcome = self._measure(point, channel, phase="coverage_segment_probe")
+            if outcome == "near":
+                self._clear_at(point, channel, reason="near coverage segment probe")
+            elif outcome == "no_signal":
+                raise RuntimeError(
+                    f"guaranteed segment point returned no_signal for channel {channel}"
+                )
+
+    def _segment_guaranteed_interval(
+        self, start: Point, end: Point, region: Sequence[Point]
+    ) -> tuple[float, float] | None:
+        """Return segment parameters whose points are within 1000 m of P."""
+
+        direction_x = end.x - start.x
+        direction_y = end.y - start.y
+        quadratic = direction_x * direction_x + direction_y * direction_y
+        if quadratic <= 1e-20:
+            return (
+                (0.0, 0.0)
+                if self._point_guarantees_reception(start, region)
+                else None
+            )
+        radius = self.config.guaranteed_reception_radius - 1e-5
+        lower = 0.0
+        upper = 1.0
+        for vertex in region:
+            relative_x = start.x - vertex.x
+            relative_y = start.y - vertex.y
+            linear = 2.0 * (
+                relative_x * direction_x + relative_y * direction_y
+            )
+            constant = relative_x * relative_x + relative_y * relative_y - radius * radius
+            discriminant = linear * linear - 4.0 * quadratic * constant
+            if discriminant < 0.0:
+                return None
+            root = math.sqrt(discriminant)
+            vertex_lower = (-linear - root) / (2.0 * quadratic)
+            vertex_upper = (-linear + root) / (2.0 * quadratic)
+            lower = max(lower, vertex_lower)
+            upper = min(upper, vertex_upper)
+            if lower > upper + 1e-12:
+                return None
+        return max(0.0, lower), min(1.0, upper)
+
     def _opportunistic_measurements(self, point: Point) -> None:
         for track in list(self.tracks.values()):
             if track.cleared or self._already_measured_here(track, point):
                 continue
             if not self._point_guarantees_reception(point, track.region):
                 continue
-            if self._minimum_crossing_angle(track, point) < self.config.opportunistic_min_crossing_angle_deg:
+            if (
+                self._minimum_crossing_angle(track, point)
+                < self.config.opportunistic_min_crossing_angle_deg
+            ):
                 continue
             outcome = self._measure(point, track.channel, phase="opportunistic")
             if outcome == "near":
                 self._clear_at(point, track.channel, reason="near opportunistic")
+
+    def _coverage_opportunistic_measurements(self, point: Point) -> None:
+        if not self.config.probe_known_channels_during_coverage:
+            self._opportunistic_measurements(point)
+            return
+        for track in list(self.tracks.values()):
+            if track.cleared or self._already_measured_here(track, point):
+                continue
+            center = minimum_enclosing_circle(track.region).center
+            if (
+                self._distance(point, center)
+                > self.config.coverage_probe_center_distance_m
+            ):
+                continue
+            if (
+                self._minimum_crossing_angle(track, point)
+                < self.config.opportunistic_min_crossing_angle_deg
+            ):
+                continue
+            outcome = self._measure(point, track.channel, phase="coverage_probe")
+            if outcome == "near":
+                self._clear_at(point, track.channel, reason="near coverage probe")
 
     def _active_localization(self) -> None:
         while True:
             pending = [track for track in self.tracks.values() if not track.cleared]
             if not pending:
                 return
-
-            clearable = [
-                track
-                for track in pending
-                if minimum_enclosing_circle(track.region).radius
-                <= self.config.clear_decision_radius
-            ]
-            if clearable:
-                current = Point(*self.robot.current_position)
-                track = min(
-                    clearable,
-                    key=lambda item: self._distance(
-                        current, minimum_enclosing_circle(item.region).center
-                    ),
-                )
-                center = minimum_enclosing_circle(track.region).center
-                self._clear_at(center, track.channel, reason="MEC radius certified")
-                continue
-
             current = Point(*self.robot.current_position)
-            # Evaluate a short list of nearby tracks jointly. Choosing only the
-            # nearest MEC can send the robot to a point that is far from the
-            # track's actual minimax candidate. The shortlist keeps CPU cost
-            # bounded while allowing one-step route-aware decisions.
-            shortlist = sorted(
-                pending,
-                key=lambda item: (
-                    self._distance(
-                        current, minimum_enclosing_circle(item.region).center
+            centers = [minimum_enclosing_circle(track.region).center for track in pending]
+            if self.config.source_tour_planning and len(pending) > 1:
+                source_order = self._optimal_open_route_order(current, centers)
+                track_index = source_order[0]
+            else:
+                track_index = min(
+                    range(len(pending)),
+                    key=lambda index: (
+                        self._distance(current, centers[index]),
+                        pending[index].channel,
                     ),
-                    minimum_enclosing_circle(item.region).radius,
-                    item.channel,
-                ),
-            )[: self.config.route_candidate_tracks]
-            options = []
-            for candidate_track in shortlist:
-                if (
-                    candidate_track.localization_measurements
-                    >= self.config.maximum_localization_measurements
-                ):
-                    continue
-                candidate_point, predicted_radius = self._choose_localization_point(
-                    candidate_track, log_event="localization_candidate_evaluated"
                 )
-                options.append(
-                    (
-                        self._distance(current, candidate_point),
-                        predicted_radius,
-                        candidate_track.channel,
-                        candidate_track,
-                        candidate_point,
-                    )
+                source_order = [track_index]
+            track = pending[track_index]
+            enclosing = minimum_enclosing_circle(track.region)
+            self._log(
+                "source_tour_selected",
+                channels=[pending[index].channel for index in source_order],
+                first_channel=track.channel,
+            )
+            if enclosing.radius <= self.config.clear_decision_radius:
+                self._clear_at(
+                    enclosing.center, track.channel, reason="MEC radius certified"
                 )
-            if not options:
-                raise RuntimeError("no eligible localization track")
-            _, _, _, track, point = min(
-                options, key=lambda item: (item[0], item[1], item[2])
+                continue
+            if (
+                track.localization_measurements
+                >= self.config.maximum_localization_measurements
+            ):
+                raise RuntimeError(
+                    f"channel {track.channel} exceeded localization measurement limit"
+                )
+            point, predicted_radius = self._choose_localization_point(
+                track, log_event="localization_candidate_evaluated"
             )
             self._log(
                 "localization_track_selected",
                 channel=track.channel,
                 point=self._point_dict(point),
                 travel_distance_m=self._distance(current, point),
-                shortlist_channels=[item.channel for item in shortlist],
+                predicted_worst_mec_radius=predicted_radius,
+                source_tour_channels=[pending[index].channel for index in source_order],
             )
-            if track.localization_measurements >= self.config.maximum_localization_measurements:
-                raise RuntimeError(
-                    f"channel {track.channel} exceeded localization measurement limit"
-                )
             outcome = self._measure(point, track.channel, phase="active_localization")
             track.localization_measurements += 1
             if outcome == "near":
@@ -371,6 +584,14 @@ class Problem3Strategy:
             # region is inside the guaranteed reception disk. These extra
             # readings cost seconds, not another long robot trip.
             self._opportunistic_measurements(point)
+            if not track.cleared:
+                enclosing = minimum_enclosing_circle(track.region)
+                if enclosing.radius <= self.config.clear_decision_radius:
+                    self._clear_at(
+                        enclosing.center,
+                        track.channel,
+                        reason="MEC radius certified",
+                    )
 
     def _choose_localization_point(
         self,
@@ -426,7 +647,9 @@ class Problem3Strategy:
         chosen = min(
             acceptable,
             key=lambda item: (
-                self._distance(current, item.point),
+                self._distance(current, item.point)
+                + self.config.localization_clear_leg_weight
+                * self._distance(item.point, enclosing.center),
                 item.worst_mec_radius,
             ),
         )
@@ -462,7 +685,9 @@ class Problem3Strategy:
             track = self.tracks.setdefault(channel, SourceTrack(channel=channel))
             track.observations.append(observation)
             track.measured_positions.append(point)
-            track.region = self._rebuild_region(track.observations)
+            track.region = self._rebuild_region(
+                track.observations, track.no_signal_positions
+            )
             enclosing = minimum_enclosing_circle(track.region)
             self._log(
                 "region_updated",
@@ -475,7 +700,31 @@ class Problem3Strategy:
         elif result == "near":
             track = self.tracks.setdefault(channel, SourceTrack(channel=channel))
             track.measured_positions.append(point)
-        elif result != "no_signal":
+        elif result == "no_signal":
+            track = self.tracks.get(channel)
+            if track is not None and track.region:
+                track.no_signal_positions.append(point)
+                track.measured_positions.append(point)
+                track.region = self._convex_outer_after_no_signal(
+                    track.region,
+                    point,
+                    self.config.guaranteed_reception_radius,
+                )
+                if not track.region:
+                    raise RuntimeError(
+                        f"no-signal observation emptied channel {channel} region"
+                    )
+                enclosing = minimum_enclosing_circle(track.region)
+                self._log(
+                    "region_updated",
+                    channel=channel,
+                    cause="no_signal_exclusion",
+                    vertex_count=len(track.region),
+                    area=polygon_area(track.region),
+                    mec_center=self._point_dict(enclosing.center),
+                    mec_radius=enclosing.radius,
+                )
+        else:
             raise RuntimeError(f"unknown measure result: {result!r}")
         return result
 
@@ -516,7 +765,9 @@ class Problem3Strategy:
         track.clear_position = point
 
     def _rebuild_region(
-        self, observations: Sequence[BearingObservation]
+        self,
+        observations: Sequence[BearingObservation],
+        no_signal_positions: Sequence[Point] = (),
     ) -> list[Point]:
         region = circumscribed_disk_polygon(
             Point(0.0, 0.0),
@@ -543,7 +794,49 @@ class Problem3Strategy:
                     raise RuntimeError(
                         "bearing observations produced an empty feasible region"
                     )
-        return convex_hull(region)
+        region = convex_hull(region)
+        for point in no_signal_positions:
+            region = self._convex_outer_after_no_signal(
+                region, point, self.config.guaranteed_reception_radius
+            )
+        return region
+
+    def _convex_outer_after_no_signal(
+        self, region: Sequence[Point], station: Point, radius: float
+    ) -> list[Point]:
+        """Convex hull of a convex polygon after removing an open disk."""
+
+        candidates: list[Point] = []
+        radius_sq = radius * radius
+        tolerance = 1e-8 * max(1.0, radius_sq)
+        for index, first in enumerate(region):
+            second = region[(index + 1) % len(region)]
+            first_dx = first.x - station.x
+            first_dy = first.y - station.y
+            if first_dx * first_dx + first_dy * first_dy >= radius_sq - tolerance:
+                candidates.append(first)
+
+            edge_x = second.x - first.x
+            edge_y = second.y - first.y
+            a = edge_x * edge_x + edge_y * edge_y
+            if a <= 1e-20:
+                continue
+            b = 2.0 * (first_dx * edge_x + first_dy * edge_y)
+            c = first_dx * first_dx + first_dy * first_dy - radius_sq
+            discriminant = b * b - 4.0 * a * c
+            if discriminant < -tolerance:
+                continue
+            root = math.sqrt(max(0.0, discriminant))
+            for fraction in ((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)):
+                if -1e-10 <= fraction <= 1.0 + 1e-10:
+                    fraction = min(1.0, max(0.0, fraction))
+                    candidates.append(
+                        Point(
+                            first.x + fraction * edge_x,
+                            first.y + fraction * edge_y,
+                        )
+                    )
+        return convex_hull(candidates) if candidates else []
 
     def _point_guarantees_reception(
         self, point: Point, region: Sequence[Point]

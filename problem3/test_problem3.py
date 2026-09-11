@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import sys
 import unittest
+from itertools import permutations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,10 +60,55 @@ class Problem3Tests(unittest.TestCase):
                 simulator, StrategyConfig(coverage_ring_radius=1000.0)
             )
 
-    def test_invalid_route_shortlist_is_rejected(self) -> None:
+    def test_segment_guaranteed_interval_is_inside_every_reception_disk(self) -> None:
         simulator = LocalOmnidirectionalSimulator.random_case(1, 10)
-        with self.assertRaises(ValueError):
-            Problem3Strategy(simulator, StrategyConfig(route_candidate_tracks=0))
+        strategy = Problem3Strategy(simulator, self.fast_config())
+        region = [
+            Point(-100.0, -50.0),
+            Point(100.0, -50.0),
+            Point(100.0, 50.0),
+            Point(-100.0, 50.0),
+        ]
+        start = Point(-1500.0, 0.0)
+        end = Point(1500.0, 0.0)
+        interval = strategy._segment_guaranteed_interval(start, end, region)
+        self.assertIsNotNone(interval)
+        assert interval is not None
+        for fraction in interval:
+            point = Point(
+                start.x + fraction * (end.x - start.x),
+                start.y + fraction * (end.y - start.y),
+            )
+            self.assertTrue(strategy._point_guarantees_reception(point, region))
+
+    def test_exact_open_route_matches_brute_force(self) -> None:
+        simulator = LocalOmnidirectionalSimulator.random_case(1, 10)
+        strategy = Problem3Strategy(simulator, self.fast_config())
+        start = Point(0.0, 0.0)
+        targets = [
+            Point(2.0, 0.0),
+            Point(2.0, 100.0),
+            Point(3.0, 0.0),
+        ]
+        order = strategy._optimal_open_route_order(start, targets)
+        route_length = sum(
+            strategy._distance(
+                start if route_index == 0 else targets[order[route_index - 1]],
+                targets[target_index],
+            )
+            for route_index, target_index in enumerate(order)
+        )
+        brute_force_length = min(
+            sum(
+                strategy._distance(
+                    start if route_index == 0 else targets[candidate[route_index - 1]],
+                    targets[target_index],
+                )
+                for route_index, target_index in enumerate(candidate)
+            )
+            for candidate in permutations(range(len(targets)))
+        )
+        self.assertAlmostEqual(route_length, brute_force_length, places=9)
 
     def test_adaptive_ring_route_preserves_short_hexagon_path(self) -> None:
         simulator = LocalOmnidirectionalSimulator.random_case(1, 10)
