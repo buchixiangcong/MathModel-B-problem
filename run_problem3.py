@@ -46,6 +46,7 @@ def strategy_config(fast: bool) -> StrategyConfig:
         source_edge_subdivisions=4,
         source_interior_levels=2,
         error_sample_count=3,
+        route_candidate_tracks=3,
     )
 
 
