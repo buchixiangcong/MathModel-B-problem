@@ -60,6 +60,7 @@ class StrategyConfig:
     near_optimal_tolerance: float = 0.03
     maximum_localization_measurements: int = 8
     opportunistic_min_crossing_angle_deg: float = 15.0
+    route_candidate_tracks: int = 3
 
 
 @dataclass
@@ -137,6 +138,8 @@ class Problem3Strategy:
                 f"coverage ring is invalid: worst distance {worst:.3f} m exceeds "
                 f"{self.config.guaranteed_reception_radius:.3f} m"
             )
+        if self.config.route_candidate_tracks < 1:
+            raise ValueError("route_candidate_tracks must be positive")
 
     def run(self) -> RunSummary:
         enter_response = self.robot.enter()
@@ -188,9 +191,8 @@ class Problem3Strategy:
 
     def _coverage_scan(self) -> None:
         unseen = set(range(1, 21))
-        for scan_index, point in enumerate(
-            coverage_points(self.config.coverage_ring_radius)
-        ):
+        points = coverage_points(self.config.coverage_ring_radius)
+        for scan_index, point in enumerate(points):
             self._log(
                 "coverage_point_start",
                 scan_index=scan_index,
@@ -219,8 +221,57 @@ class Problem3Strategy:
                 scan_index=scan_index,
                 remaining_unseen=sorted(unseen),
             )
+            if scan_index == 0:
+                points[1:] = self._choose_coverage_ring_route(points[1:])
         self.absent_channels = unseen
         self._log("coverage_complete", absent_channels=sorted(unseen))
+
+    def _choose_coverage_ring_route(self, ring: Sequence[Point]) -> list[Point]:
+        """Choose among equal-length hexagon paths using a source-tour proxy."""
+
+        if not self.tracks:
+            return list(ring)
+        targets = [
+            minimum_enclosing_circle(track.region).center
+            for track in self.tracks.values()
+            if track.region
+        ]
+        options: list[tuple[float, int, int, list[Point]]] = []
+        for start in range(len(ring)):
+            for direction in (1, -1):
+                route = [
+                    ring[(start + direction * offset) % len(ring)]
+                    for offset in range(len(ring))
+                ]
+                score = self._greedy_open_route_length(route[-1], targets)
+                options.append((score, start, direction, route))
+        score, start, direction, route = min(
+            options, key=lambda item: (item[0], item[1], -item[2])
+        )
+        self._log(
+            "coverage_route_selected",
+            start_index=start,
+            direction=direction,
+            predicted_followup_route_m=score,
+            route=[self._point_dict(point) for point in route],
+        )
+        return route
+
+    def _greedy_open_route_length(
+        self, start: Point, targets: Sequence[Point]
+    ) -> float:
+        current = start
+        remaining = list(targets)
+        total = 0.0
+        while remaining:
+            next_index = min(
+                range(len(remaining)),
+                key=lambda index: self._distance(current, remaining[index]),
+            )
+            target = remaining.pop(next_index)
+            total += self._distance(current, target)
+            current = target
+        return total
 
     def _opportunistic_measurements(self, point: Point) -> None:
         for track in list(self.tracks.values()):
@@ -259,9 +310,11 @@ class Problem3Strategy:
                 continue
 
             current = Point(*self.robot.current_position)
-            # Choose one track before running the expensive minimax point search.
-            # The region MEC center is a stable proxy for the source location.
-            track = min(
+            # Evaluate a short list of nearby tracks jointly. Choosing only the
+            # nearest MEC can send the robot to a point that is far from the
+            # track's actual minimax candidate. The shortlist keeps CPU cost
+            # bounded while allowing one-step route-aware decisions.
+            shortlist = sorted(
                 pending,
                 key=lambda item: (
                     self._distance(
@@ -270,8 +323,38 @@ class Problem3Strategy:
                     minimum_enclosing_circle(item.region).radius,
                     item.channel,
                 ),
+            )[: self.config.route_candidate_tracks]
+            options = []
+            for candidate_track in shortlist:
+                if (
+                    candidate_track.localization_measurements
+                    >= self.config.maximum_localization_measurements
+                ):
+                    continue
+                candidate_point, predicted_radius = self._choose_localization_point(
+                    candidate_track, log_event="localization_candidate_evaluated"
+                )
+                options.append(
+                    (
+                        self._distance(current, candidate_point),
+                        predicted_radius,
+                        candidate_track.channel,
+                        candidate_track,
+                        candidate_point,
+                    )
+                )
+            if not options:
+                raise RuntimeError("no eligible localization track")
+            _, _, _, track, point = min(
+                options, key=lambda item: (item[0], item[1], item[2])
             )
-            point, _ = self._choose_localization_point(track)
+            self._log(
+                "localization_track_selected",
+                channel=track.channel,
+                point=self._point_dict(point),
+                travel_distance_m=self._distance(current, point),
+                shortlist_channels=[item.channel for item in shortlist],
+            )
             if track.localization_measurements >= self.config.maximum_localization_measurements:
                 raise RuntimeError(
                     f"channel {track.channel} exceeded localization measurement limit"
@@ -284,8 +367,16 @@ class Problem3Strategy:
                 raise RuntimeError(
                     f"guaranteed point returned no_signal for channel {track.channel}"
                 )
+            # Reuse the station for any other channel whose entire feasible
+            # region is inside the guaranteed reception disk. These extra
+            # readings cost seconds, not another long robot trip.
+            self._opportunistic_measurements(point)
 
-    def _choose_localization_point(self, track: SourceTrack) -> tuple[Point, float]:
+    def _choose_localization_point(
+        self,
+        track: SourceTrack,
+        log_event: str = "localization_point_selected",
+    ) -> tuple[Point, float]:
         enclosing, boundary = guaranteed_core_boundary(
             track.region,
             self.config.guaranteed_reception_radius,
@@ -340,7 +431,7 @@ class Problem3Strategy:
             ),
         )
         self._log(
-            "localization_point_selected",
+            log_event,
             channel=track.channel,
             point=self._point_dict(chosen.point),
             predicted_worst_mec_radius=chosen.worst_mec_radius,
