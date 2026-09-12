@@ -149,23 +149,27 @@ class Problem4Strategy:
         self._log("discovery_plan", station_count=len(stations), lattice_spacing=self.config.lattice_spacing,
                   coverage_certificate="triangular-cell convex-hull proof")
         for index, station in enumerate(stations):
-            if len(self.tracks) >= 16:
-                channels = sorted(channel for channel, track in self.tracks.items() if not track.cleared)
-            else:
-                channels = sorted(
-                    unseen
-                    | {
-                        channel
-                        for channel, track in self.tracks.items()
-                        if not track.cleared
-                    }
-                )
+            # Keep a discovered channel in the scan only until it has enough
+            # positive bearings for the normal localization phase. Repeating
+            # it after that point is redundant; channels that do not collect
+            # enough bearings fall back to the guaranteed-safe bootstrap ring.
+            channels = sorted(
+                unseen
+                | {
+                    channel
+                    for channel, track in self.tracks.items()
+                    if not track.cleared
+                    and len(track.observations) < self.config.bootstrap_observation_target
+                }
+            )
             for channel in channels:
                 outcome = self._measure(station, channel, "discovery")
                 if outcome != "no_signal":
                     unseen.discard(channel)
                 if outcome == "near":
                     self._clear_at(station, channel, "near discovery")
+            if not unseen:
+                break
         self.absent_channels = unseen
 
     def _route_stations(self, stations: Sequence[Point]) -> list[Point]:
