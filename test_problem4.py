@@ -5,7 +5,7 @@ import unittest
 
 from local_simulator_problem4 import LocalMixedSimulator, MixedSource
 from problem1.problem1.problem1_geometry import Point
-from problem4.problem4_strategy import Problem4Strategy, StrategyConfig, nearest_station_convex_hull_contains, triangular_lattice_points
+from problem4.problem4_strategy import Problem4Strategy, StrategyConfig, nearest_station_convex_hull_contains, polar_mesh_points, triangular_lattice_points
 
 
 class Problem4Tests(unittest.TestCase):
@@ -15,6 +15,15 @@ class Problem4Tests(unittest.TestCase):
         for radial in range(0, 1801, 150):
             for index in range(72):
                 angle = 2.0 * math.pi * index / 72.0
+                source = Point(radial * math.cos(angle), radial * math.sin(angle))
+                self.assertTrue(nearest_station_convex_hull_contains(source, stations))
+
+    def test_polar_mesh_has_directional_discovery_certificate(self) -> None:
+        stations = polar_mesh_points()
+        self.assertEqual(len(stations), 25)
+        for radial in range(0, 1801, 25):
+            for index in range(360):
+                angle = 2.0 * math.pi * index / 360.0
                 source = Point(radial * math.cos(angle), radial * math.sin(angle))
                 self.assertTrue(nearest_station_convex_hull_contains(source, stations))
 

@@ -28,11 +28,14 @@ def parse_args() -> argparse.Namespace:
 
 def strategy_config(fast: bool) -> StrategyConfig:
     if fast:
-        return StrategyConfig(lattice_margin=0.0, strict_discovery_certificate=False,
+        # The 25-point polar mesh is a smaller certified triangulation of the
+        # complete target disk; fast mode only reduces localization sampling.
+        return StrategyConfig(lattice_margin=1000.0, strict_discovery_certificate=True,
+                              discovery_pattern="polar25",
                               circle_side_count=120, candidate_angle_count=12, candidate_radial_levels=2,
                               source_edge_subdivisions=3, source_interior_levels=1, error_sample_count=2,
                               max_grid_localization_rounds=6, maximum_localization_measurements=80,
-                              bootstrap_observation_target=4)
+                              bootstrap_observation_target=2, distance_ring_activation_radius=200.0)
     return StrategyConfig()
 
 
