@@ -32,6 +32,7 @@ class StrategyConfig:
     lattice_spacing: float = 1000.0
     lattice_margin: float = 1000.0
     strict_discovery_certificate: bool = True
+    discovery_pattern: str = "triangular31"
     guaranteed_reception_radius: float = 1000.0
     maximum_reception_radius: float = 1500.0
     angle_error_deg: float = 1.0
@@ -45,6 +46,7 @@ class StrategyConfig:
     maximum_localization_measurements: int = 80
     max_grid_localization_rounds: int = 6
     bootstrap_observation_target: int = 4
+    distance_ring_activation_radius: float = 480.0
     near_optimal_tolerance: float = 0.25
 
 
@@ -89,6 +91,20 @@ def triangular_lattice_points(spacing: float = 1000.0, extent: float = 2800.0) -
     return points
 
 
+def polar_mesh_points() -> list[Point]:
+    """A 25-point certified mesh: center, 8-point inner ring, 16-point outer ring."""
+    points = [Point(0.0, 0.0)]
+    for count, radius in ((8, 1000.0), (16, 1840.0)):
+        points.extend(
+            Point(
+                radius * math.cos(2.0 * math.pi * index / count),
+                radius * math.sin(2.0 * math.pi * index / count),
+            )
+            for index in range(count)
+        )
+    return points
+
+
 def point_in_convex_polygon(point: Point, polygon: Sequence[Point]) -> bool:
     if len(polygon) < 3:
         return len(polygon) == 1 and point == polygon[0]
@@ -122,7 +138,15 @@ class Problem4Strategy:
             and self.config.lattice_margin < self.config.lattice_spacing
         ):
             raise ValueError("lattice margin must be at least one lattice spacing")
-        self.stations = triangular_lattice_points(self.config.lattice_spacing, self.config.target_radius + self.config.lattice_margin)
+        if self.config.discovery_pattern == "polar25":
+            self.stations = polar_mesh_points()
+        elif self.config.discovery_pattern == "triangular31":
+            self.stations = triangular_lattice_points(
+                self.config.lattice_spacing,
+                self.config.target_radius + self.config.lattice_margin,
+            )
+        else:
+            raise ValueError(f"unknown discovery pattern: {self.config.discovery_pattern!r}")
 
     def run(self) -> RunSummary:
         self._update_time(self.robot.enter())
@@ -229,7 +253,7 @@ class Problem4Strategy:
             if len(track.observations) < self.config.bootstrap_observation_target:
                 self._bootstrap_positive_neighbors(track)
                 continue
-            if enclosing.radius < 480.0:
+            if enclosing.radius < self.config.distance_ring_activation_radius:
                 count_before = track.localization_measurements
                 self._certified_distance_ring_probe(track)
                 if track.cleared:
@@ -248,7 +272,7 @@ class Problem4Strategy:
     def _certified_distance_ring_probe(self, track: SourceTrack) -> None:
         """Probe a ring that contains the source and is wholly within 1000 m."""
         enclosing = minimum_enclosing_circle(track.region)
-        if enclosing.radius >= 480.0:
+        if enclosing.radius >= self.config.distance_ring_activation_radius:
             return
         ring_radius = min(
             1000.0 - enclosing.radius - 1.0,
