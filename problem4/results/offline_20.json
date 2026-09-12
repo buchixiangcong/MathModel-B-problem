@@ -1,0 +1,190 @@
+{
+  "case_count": 20,
+  "passed_count": 20,
+  "mean_virtual_time_s": 13947.448994625205,
+  "max_virtual_time_s": 15020.41331045626,
+  "mean_measure_count": 627.55,
+  "wall_time_s": 39.109738000202924,
+  "records": [
+    {
+      "seed": 0,
+      "source_count": 16,
+      "cleared_count": 16,
+      "virtual_time_s": 14637.05189439119,
+      "measure_count": 594,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 1,
+      "source_count": 11,
+      "cleared_count": 11,
+      "virtual_time_s": 13883.06277169133,
+      "measure_count": 636,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 2,
+      "source_count": 16,
+      "cleared_count": 16,
+      "virtual_time_s": 13907.141816582984,
+      "measure_count": 577,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 3,
+      "source_count": 11,
+      "cleared_count": 11,
+      "virtual_time_s": 13543.740731219294,
+      "measure_count": 621,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 4,
+      "source_count": 11,
+      "cleared_count": 11,
+      "virtual_time_s": 12752.58276489882,
+      "measure_count": 627,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 5,
+      "source_count": 14,
+      "cleared_count": 14,
+      "virtual_time_s": 13746.756702013381,
+      "measure_count": 629,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 6,
+      "source_count": 16,
+      "cleared_count": 16,
+      "virtual_time_s": 14379.628687110542,
+      "measure_count": 591,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 7,
+      "source_count": 12,
+      "cleared_count": 12,
+      "virtual_time_s": 13934.35318538118,
+      "measure_count": 633,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 8,
+      "source_count": 11,
+      "cleared_count": 11,
+      "virtual_time_s": 13512.466476446492,
+      "measure_count": 634,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 9,
+      "source_count": 13,
+      "cleared_count": 13,
+      "virtual_time_s": 14636.028245939562,
+      "measure_count": 649,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 10,
+      "source_count": 14,
+      "cleared_count": 14,
+      "virtual_time_s": 13776.076246281318,
+      "measure_count": 632,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 11,
+      "source_count": 13,
+      "cleared_count": 13,
+      "virtual_time_s": 13999.451711069298,
+      "measure_count": 636,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 12,
+      "source_count": 13,
+      "cleared_count": 13,
+      "virtual_time_s": 14272.872528493303,
+      "measure_count": 646,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 13,
+      "source_count": 12,
+      "cleared_count": 12,
+      "virtual_time_s": 12871.398328131989,
+      "measure_count": 628,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 14,
+      "source_count": 10,
+      "cleared_count": 10,
+      "virtual_time_s": 12768.388293573478,
+      "measure_count": 629,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 15,
+      "source_count": 11,
+      "cleared_count": 11,
+      "virtual_time_s": 13906.065025631327,
+      "measure_count": 634,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 16,
+      "source_count": 12,
+      "cleared_count": 12,
+      "virtual_time_s": 13681.45020118124,
+      "measure_count": 645,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 17,
+      "source_count": 14,
+      "cleared_count": 14,
+      "virtual_time_s": 15020.41331045626,
+      "measure_count": 633,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 18,
+      "source_count": 11,
+      "cleared_count": 11,
+      "virtual_time_s": 14998.005998169298,
+      "measure_count": 639,
+      "uncleared_channels": [],
+      "error": ""
+    },
+    {
+      "seed": 19,
+      "source_count": 15,
+      "cleared_count": 15,
+      "virtual_time_s": 14722.044973841832,
+      "measure_count": 638,
+      "uncleared_channels": [],
+      "error": ""
+    }
+  ]
+}
